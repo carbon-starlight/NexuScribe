@@ -1,0 +1,1031 @@
+# Python text editor with definition/list (in development) autocompletion
+# Alpha 0.2 build
+# For any suggestions and questions contact: Telegram: @carbon_starlight
+
+program_version = "0.2"
+
+program_name = f"RocketLecture {program_version}"
+# "NexuScribe" is one more good name idea, originally suggested by GPT-4
+program_name = f"NexuScribe {program_version}"
+# Ctrl+/ the line above if RocketLecture will be the final name
+
+displayWordSuggestion: bool = False
+"""If "(suggestion)" should be displayed after the grey text"""
+
+import tkinter as tk
+from tkinter import filedialog
+from tkinter import messagebox
+import re
+# from tkinter import Toplevel
+from PyDictionary import PyDictionary
+dictionary = PyDictionary()
+from time import sleep
+from pynput.keyboard import Key, Controller
+import keyboard
+import platform
+import subprocess
+from wiktionaryparser import WiktionaryParser
+import time
+import pprint
+from pywiktionary import WiktionaryParserFactory
+import rich
+from rich.console import Console
+console = Console()
+import json
+import random
+import schedule
+import os
+
+from rich.traceback import install
+
+# install()
+
+rich.traceback.install()
+
+import schedule
+
+# To install packages to my version of pip:
+# c:\Users\qwert\AppData\Local\Microsoft\WindowsApps\python3.11.exe -m pip install --upgrade <package>
+
+from pathlib import Path
+print("Path: ", Path.cwd())
+
+parser = WiktionaryParser()
+
+keyboard_controller = Controller()
+
+global definition_selected
+definition_selected = 0
+"""The index of the definition currently selected by user in grey text suggestion paragraph"""
+
+class TextEditor:
+    changes_saved = True
+    keyboard_layout = "system"
+    # remap_capslock_to_backspace = False
+    this_interaction_shall_not_be_modified = False
+    """To add to key presses directed by the system to avoid their modification by user settings which may lead to recursion"""
+    this_interaction_shall_not_be_modified_counter = 2
+    """To avoid recursion, see on_key_press"""
+    last_special_action = ''
+    make_normal_cl_press = False
+    stage_of_cl_press = 0
+    dictionary_selected = "auto"
+    """The default dictionary that will be used to fetch definitions"""
+    dictionary_language_selected = "english"
+    part_of_speech = "noun"
+    """Default part of speech"""
+    part_of_speech_list = ["noun", "adjective", "adverb", "verb", "preposition", "pronoun", "interjection", "article", "preposition", "conjunction", "determiner", "numeral", "pronoun", "exclamation", "adverb", "other"]
+    try:
+        with open("NexuScribe Configuration Parameters.json", "r") as f:
+            config_parameters = json.load(f)
+        if config_parameters["regular_autosave_is_activated"]:
+            regular_autosave_is_activated = True
+        else:
+            regular_autosave_is_activated = False
+    except:
+        regular_autosave_is_activated = False
+
+
+
+    def __init__(self):
+
+        
+        self.window = tk.Tk()
+        self.window.title(program_name)
+
+        self.text_area = tk.Text(self.window, wrap=tk.WORD)
+        self.text_area.pack(expand=tk.YES, fill=tk.BOTH)
+
+        # # ↓↓↓ Code for layout conversion, try to delete if something breaks
+        # root = tk.Tk()
+        # text_area = tk.Text(root)
+        # text_area.pack(expand=True, fill='both')
+        # # ↑↑↑
+
+        self.remap_capslock_to_backspace = tk.BooleanVar(value=False) # Or True, whichever is your default
+        self.remap_backspace_to_capslock = tk.BooleanVar(value=False)
+        # self.remap_capslock_to_backspace = tk.BooleanVar()
+        # self.remap_capslock_to_backspace.set(False)  # Set the initial value to False or True based on your needs
+
+        self.create_menu()
+
+        self.window.bind("<Control-s>", self.save_file)
+        self.window.bind("<Control-n>", self.new_file)
+        self.window.bind("<Control-o>", self.open_file)
+
+        self.window.protocol("WM_DELETE_WINDOW", self.on_closing)
+
+        self.check_schedule()
+
+        self.window.mainloop()
+
+        # schedule.run_pending()
+        # self.run_scheduled_tasks()
+
+
+    def check_schedule(self):
+        """Check and run pending scheduled jobs."""
+        schedule.run_pending()
+        # Check again after 200ms
+        self.window.after(200, self.check_schedule)
+    
+
+    def create_menu(self):
+        menu = tk.Menu(self.window)
+        self.window.config(menu=menu)
+
+        file_menu = tk.Menu(menu)
+        menu.add_cascade(label="File", menu=file_menu)
+        file_menu.add_command(label="New", command=self.new_file)
+        file_menu.add_command(label="Open", command=self.open_file)
+        file_menu.add_command(label="Save", command=self.save_file)
+        file_menu.add_separator()
+        file_menu.add_command(label="Exit", command=self.window.quit)
+
+        # edit_menu = tk.Menu(menu)
+        # menu.add_cascade(label="Edit", menu=edit_menu)
+        # edit_menu.add_command(label="Undo", command=self.undo)
+        # edit_menu.add_command(label="Redo", command=self.redo)
+
+        menu_variant_to_show = 1
+
+        if menu_variant_to_show == 0:
+
+            self.language_var = tk.StringVar()
+            self.source_var = tk.StringVar()
+            self.language_var.set('english')
+            self.source_var.set('WiktionaryParser')
+            # self.autosave_var = tk.BooleanVar()
+
+            dictionary_menu = tk.Menu(menu)
+            menu.add_cascade(label="Dictionary", menu=dictionary_menu)
+            
+            # languages = ['English', 
+            #              'Russian', 
+            #              'French', 
+            #              'German', 
+            #              'Italian',
+            #              'Portugese',
+            #              'Japanese']
+            # for language in languages:
+            #     dictionary_menu.add_radiobutton(label=language,
+            #                                     variable=self.language_var,
+            #                                     value=language.lower(),
+            #                                     command=lambda lang=language: setattr(self, 'dictionary_language_selected', lang.lower()))
+
+            # # Create a cascade submenu for more languages
+            # more_languages_menu = tk.Menu(dictionary_menu)
+            # dictionary_menu.add_cascade(label="More languages", menu=more_languages_menu)
+
+            # # more_languages = ['English', 'Russian', 'Ukrainian', 'Polish', 'Spanish', 
+            # #              'French', 'German', 'Italian', 'Portuguese', 'Chinese', 
+            # #              'Japanese', 'Korean', 'Vietnamese', 'Thai', 'Indonesian', 
+            # #              'Turkish', 'Czech', 'Catalan']
+            
+            # more_languages = [
+            #                     'Afrikaans', 'Albanian', 'Amharic', 'Arabic', 'Armenian', 'Azerbaijani', 
+            #                     'Basque', 'Belarusian', 'Bengali', 'Bosnian', 'Bulgarian', 'Burmese', 
+            #                     'Cantonese', 'Catalan', 'Cebuano', 'Chichewa', 'Chinese', 'Corsican', 
+            #                     'Croatian', 'Czech', 'Danish', 'Dutch', 'Dzongkha',
+            #                     'English', 'Esperanto', 'Estonian', 
+            #                     'Fijian', 'Filipino', 'Finnish', 'French', 'Frisian',
+            #                     'Galician', 'Georgian', 'German', 'Greek', 'Gujarati',
+            #                     'Haitian Creole', 'Hausa', 'Hawaiian', 'Hebrew', 'Hindi', 'Hmong', 'Hungarian',
+            #                     'Icelandic', 'Igbo', 'Indonesian', 'Irish', 'Italian',
+            #                     'Japanese', 'Javanese',
+            #                     'Kannada', 'Kazakh', 'Khmer', 'Kinyarwanda', 'Korean', 'Kurdish', 'Kyrgyz',
+            #                     'Lao', 'Latin', 'Latvian', 'Lithuanian', 'Luxembourgish',
+            #                     'Macedonian', 'Malagasy', 'Malay', 'Malayalam', 'Maltese', 'Maori', 'Marathi', 'Mongolian',
+            #                     'Nepali', 'Norwegian',
+            #                     'Odia (Oriya)', 'Oromo',
+            #                     'Pashto', 'Persian', 'Polish', 'Portuguese', 'Punjabi',
+            #                     'Quechua',
+            #                     'Romanian', 'Russian',
+            #                     'Samoan', 'Scots Gaelic', 'Serbian', 'Sesotho', 'Shona', 'Sindhi', 'Sinhala', 'Slovak', 'Slovenian', 'Somali', 'Spanish', 'Sundanese', 'Swahili', 'Swedish',
+            #                     'Tagalog', 'Tajik', 'Tamil', 'Tatar', 'Telugu', 'Thai', 'Tibetan', 'Tigrinya', 'Tongan', 'Turkish', 'Turkmen',
+            #                     'Ukrainian', 'Urdu', 'Uyghur', 'Uzbek',
+            #                     'Vietnamese',
+            #                     'Welsh', 'Wolof',
+            #                     'Xhosa',
+            #                     'Yiddish', 'Yoruba',
+            #                     'Zulu'
+            #                 ]
+            #                 # TODO: Ensure all languages working
+            # for language in more_languages:
+            #     more_languages_menu.add_radiobutton(label=language,
+            #                                         variable=self.language_var,
+            #                                         value=language.lower(),
+            #                                         command=lambda lang=language: setattr(self, 'dictionary_language_selected', lang.lower()))
+
+            # # Separate the groups with a separator
+            # dictionary_menu.add_separator()
+            dictionary_menu.add_command(label="Some dictionaries may not work with some languages", state="disabled")
+            sources = [
+                        'WiktionaryParser', 
+                        'WiktionaryParserRu', 
+                        'WiktionaryAPI',
+                        'MultiDictionary', 
+                        'PyDictionary'
+                        ]
+            for source in sources:
+                dictionary_menu.add_radiobutton(label=source,
+                                                variable=self.source_var,
+                                                value=source,
+                                                command=lambda src=source: setattr(self, 'dictionary_selected', src))
+                
+            dictionary_menu.add_separator()
+
+            languages_supported_by_dictionary_x = {
+                'WiktionaryAPI': ['English'],
+                'WiktionaryParser': ['English'],
+                'WiktionaryParserRu': ['Russian'],
+                'MultiDictionary': ['English', 'German', 'French', 'Spanish', 'Italian'],
+                'PyDictionary': ['English'],
+            }
+
+            languages = languages_supported_by_dictionary_x[self.dictionary_selected]
+
+            for language in languages:
+                dictionary_menu.add_radiobutton(label=language,
+                                                variable=self.language_var,
+                                                value=language.lower(),
+                                                command=lambda lang=language: setattr(self, 'dictionary_language_selected', lang.lower()))
+
+            # Create a cascade submenu for more languages
+            more_languages_menu = tk.Menu(dictionary_menu)
+            dictionary_menu.add_cascade(label="More languages", menu=more_languages_menu)
+
+            # more_languages = ['English', 'Russian', 'Ukrainian', 'Polish', 'Spanish', 
+            #              'French', 'German', 'Italian', 'Portuguese', 'Chinese', 
+            #              'Japanese', 'Korean', 'Vietnamese', 'Thai', 'Indonesian', 
+            #              'Turkish', 'Czech', 'Catalan']
+            
+            more_languages = [
+                                'Afrikaans', 'Albanian', 'Amharic', 'Arabic', 'Armenian', 'Azerbaijani', 
+                                'Basque', 'Belarusian', 'Bengali', 'Bosnian', 'Bulgarian', 'Burmese', 
+                                'Cantonese', 'Catalan', 'Cebuano', 'Chichewa', 'Chinese', 'Corsican', 
+                                'Croatian', 'Czech', 'Danish', 'Dutch', 'Dzongkha',
+                                'English', 'Esperanto', 'Estonian', 
+                                'Fijian', 'Filipino', 'Finnish', 'French', 'Frisian',
+                                'Galician', 'Georgian', 'German', 'Greek', 'Gujarati',
+                                'Haitian Creole', 'Hausa', 'Hawaiian', 'Hebrew', 'Hindi', 'Hmong', 'Hungarian',
+                                'Icelandic', 'Igbo', 'Indonesian', 'Irish', 'Italian',
+                                'Japanese', 'Javanese',
+                                'Kannada', 'Kazakh', 'Khmer', 'Kinyarwanda', 'Korean', 'Kurdish', 'Kyrgyz',
+                                'Lao', 'Latin', 'Latvian', 'Lithuanian', 'Luxembourgish',
+                                'Macedonian', 'Malagasy', 'Malay', 'Malayalam', 'Maltese', 'Maori', 'Marathi', 'Mongolian',
+                                'Nepali', 'Norwegian',
+                                'Odia (Oriya)', 'Oromo',
+                                'Pashto', 'Persian', 'Polish', 'Portuguese', 'Punjabi',
+                                'Quechua',
+                                'Romanian', 'Russian',
+                                'Samoan', 'Scots Gaelic', 'Serbian', 'Sesotho', 'Shona', 'Sindhi', 'Sinhala', 'Slovak', 'Slovenian', 'Somali', 'Spanish', 'Sundanese', 'Swahili', 'Swedish',
+                                'Tagalog', 'Tajik', 'Tamil', 'Tatar', 'Telugu', 'Thai', 'Tibetan', 'Tigrinya', 'Tongan', 'Turkish', 'Turkmen',
+                                'Ukrainian', 'Urdu', 'Uyghur', 'Uzbek',
+                                'Vietnamese',
+                                'Welsh', 'Wolof',
+                                'Xhosa',
+                                'Yiddish', 'Yoruba',
+                                'Zulu'
+                            ]
+                            # TODO: Ensure all languages working
+            for language in more_languages:
+                more_languages_menu.add_radiobutton(label=language,
+                                                    variable=self.language_var,
+                                                    value=language.lower(),
+                                                    command=lambda lang=language: setattr(self, 'dictionary_language_selected', lang.lower()))
+
+            # Separate the groups with a separator
+            dictionary_menu.add_separator()
+
+
+
+            
+            # dictionary_menu.add_cascade(label=source, menu=dictionary_menu)
+
+
+            # dictionary_menu.add_radiobutton(label="English", command=lambda: setattr(self, 'dictionary_language_selected', 'english'))
+            # dictionary_menu.add_radiobutton(label="Russian", command=lambda: setattr(self, 'dictionary_language_selected', 'russian'))
+            # dictionary_menu.add_radiobutton(label="Ukrainian", command=lambda: setattr(self, 'dictionary_language_selected', 'ukrainian'))
+            # dictionary_menu.add_radiobutton(label="Polish", command=lambda: setattr(self, 'dictionary_language_selected', 'polish'))
+            # dictionary_menu.add_radiobutton(label="Spanish", command=lambda: setattr(self, 'dictionary_language_selected', 'spanish'))
+            # dictionary_menu.add_radiobutton(label="French", command=lambda: setattr(self, 'dictionary_language_selected', 'french'))
+            # dictionary_menu.add_radiobutton(label="German", command=lambda: setattr(self, 'dictionary_language_selected', 'german'))
+            # dictionary_menu.add_radiobutton(label="Italian", command=lambda: setattr(self, 'dictionary_language_selected', 'italian'))
+            # dictionary_menu.add_radiobutton(label="Portuguese", command=lambda: setattr(self, 'dictionary_language_selected', 'portuguese'))
+            # dictionary_menu.add_radiobutton(label="Chinese", command=lambda: setattr(self, 'dictionary_language_selected', 'chinese'))
+            # dictionary_menu.add_radiobutton(label="Japanese", command=lambda: setattr(self, 'dictionary_language_selected', 'japanese'))
+            # dictionary_menu.add_radiobutton(label="Korean", command=lambda: setattr(self, 'dictionary_language_selected', 'korean'))
+            # dictionary_menu.add_radiobutton(label="Vietnamese", command=lambda: setattr(self, 'dictionary_language_selected', 'vietnamese'))
+            # dictionary_menu.add_radiobutton(label="Thai", command=lambda: setattr(self, 'dictionary_language_selected', 'thai'))
+            # dictionary_menu.add_radiobutton(label="Indonesian", command=lambda: setattr(self, 'dictionary_language_selected', 'indonesian'))
+            # dictionary_menu.add_radiobutton(label="Turkish", command=lambda: setattr(self, 'dictionary_language_selected', 'turkish'))
+            # dictionary_menu.add_radiobutton(label="Czech", command=lambda: setattr(self, 'dictionary_language_selected', 'czech'))
+            # dictionary_menu.add_radiobutton(label="Catalan", command=lambda: setattr(self, 'dictionary_language_selected', 'catalan'))
+            # dictionary_menu.add_separator()
+            # dictionary_menu.
+            # dictionary_menu.add_radiobutton(label="WiktionaryParser", command=lambda: setattr(self, 'dictionary_selected', 'WiktionaryParser') or print("Dictionary switched to WiktionaryParser"))
+            # dictionary_menu.add_radiobutton(label="MultiDictionary", command=lambda: setattr(self, 'dictionary_selected', 'MultiDictionary') or print("Dictionary switched to MultiDictionary"))
+            # dictionary_menu.add_radiobutton(label="PyDictionary", command=lambda: setattr(self, 'dictionary_selected', 'PyDictionary') or print("Dictionary switched to PyDictionary"))
+
+        else:
+
+            self.language_var = tk.StringVar()
+            self.source_var = tk.StringVar()
+            self.language_var.set('english')
+            self.source_var.set('WiktionaryParser')
+
+            dictionary_menu = tk.Menu(menu)
+            menu.add_cascade(label="Dictionary", menu=dictionary_menu)
+
+            languages = ['English', 
+                         'Russian', 
+                         'Italian']
+
+            for language in languages:
+                dictionary_menu.add_radiobutton(label=language,
+                                                variable=self.language_var,
+                                                value=language.lower(),
+                                                command=lambda lang=language: setattr(self, 'dictionary_language_selected', lang.lower()))
+
+
+
+
+
+
+
+
+
+
+        layout_menu = tk.Menu(menu)
+        # menu.add_cascade(label="Layout", menu=layout_menu)
+
+        # layout_menu.add_command(label="System", command=self.switch_layout("system"))
+        # layout_menu.add_command(label="Colemak", command=self.switch_layout("colemak"))
+        # layout_menu.add_command(label="Colemak-DH", command=self.switch_layout("colemak-dh"))
+        # layout_menu.add_command(label="Dvorak", command=self.switch_layout("dvorak"))
+        # layout_menu.add_command(label="QWERTY", command=self.switch_layout("qwerty"))
+        # layout_menu.add_command(label="Workman", command=self.switch_layout("workman"))
+        # layout_menu.add_command(label="Rulemak", command=self.switch_layout("rulemak"))
+
+        # Is `lambda` needed? GPT-4 says so [TODO]
+        layout_menu.add_command(label="System", command=lambda: self.switch_layout("system"))
+        layout_menu.add_command(label="Colemak", command=lambda: self.switch_layout("colemak"))
+        layout_menu.add_command(label="Colemak-DH", command=lambda: self.switch_layout("colemak-dh"))
+        layout_menu.add_command(label="Dvorak", command=lambda: self.switch_layout("dvorak"))
+        layout_menu.add_command(label="QWERTY", command=lambda: self.switch_layout("qwerty"))
+        layout_menu.add_command(label="Workman", command=lambda: self.switch_layout("workman"))
+        layout_menu.add_command(label="Rulemak", command=lambda: self.switch_layout("rulemak"))
+        layout_menu.add_separator()
+        layout_menu.add_checkbutton(label="Remap CapsLock to Backspace",
+                                    variable=self.remap_capslock_to_backspace,
+                                    onvalue=True,
+                                    offvalue=False)
+        layout_menu.add_checkbutton(label="Remap Backspace to CapsLock",
+                                    variable=self.remap_backspace_to_capslock,
+                                    onvalue=True,
+                                    offvalue=False)
+
+
+        help_menu = tk.Menu(menu)
+        menu.add_cascade(label="Help", menu=help_menu)
+        help_menu.add_command(label="Manual", command=self.manual)
+        help_menu.add_command(label="About", command=self.about)
+
+        settings_menu = tk.Menu(menu)
+        menu.add_cascade(label="Settings", menu=settings_menu)
+        # settings_menu.add_command(label="Keyboard layout", command=pass)
+        settings_menu.add_cascade(label="Keyboard layout", menu=layout_menu)
+        settings_menu.add_checkbutton(label="Save a backup every minute",
+                            onvalue=True,
+                            offvalue=False,
+                            variable=self.regular_autosave_is_activated,
+                            command=self.toggle_autosave)
+        
+
+        # Add a binding to the text area to respond to "-", ":", "--", or "—"
+        self.text_area.bind("<KeyPress>", self.on_key_press)
+    
+        # Bind the Tab key to the on_tab_press method
+        self.text_area.bind("<Tab>", self.on_tab_press)
+        
+        # Also, make sure the Text widget doesn't lose focus
+        self.text_area.bind("<FocusOut>", self.on_focus_out)
+
+    def toggle_autosave(self):
+        if not self.regular_autosave_is_activated:
+            print("Autosave Enabled")
+            self.activate_autosave()
+            self.regular_autosave_is_activated = True
+            with open("NexuScribe Configuration Parameters.json", "w") as f:
+                json.dump({"regular_autosave_is_activated": True}, f)
+        else:
+            print("Autosave Disabled")
+            self.disactivate_autosave()
+            self.regular_autosave_is_activated = False
+            with open("NexuScribe Configuration Parameters.json", "w") as f:
+                json.dump({"regular_autosave_is_activated": False}, f)
+            
+
+    def activate_autosave(self):
+        schedule.every(1).minute.do(self.auto_save_file)
+        # schedule.every(4).seconds.do(self.auto_save_file)
+        console.log("Autosave activated")
+            
+    def auto_save_file(self):        
+        os.makedirs(os.path.join(os.path.dirname(os.path.abspath(__file__)), "NexuScribe Autosaves"), exist_ok=True)
+
+        filename = f"{int(time.time()):012d}.txt"
+        with open(f"NexuScribe Autosaves/{filename}", 'w') as f:
+            f.write(self.text_area.get(1.0, tk.END))
+        self.changes_saved = True
+
+        print(f"💾 File automatically saved according to schedule in NexuScribe Autosaves/{filename}")
+
+    def disactivate_autosave(self):
+        self.regular_autosave_is_activated = False
+        schedule.cancel_job(self.auto_save_file)
+        console.log("Autosave deactivated")
+
+    def on_closing(self):
+        if messagebox.askokcancel("Quit", "Do you want to save before exiting?"):
+            # Perform your save operation here (could call self.save_file() if implemented)
+            print("💾 Saving data...")
+            self.save_file()
+        # Destroy the window regardless of the user's choice to save
+        self.window.destroy()
+
+    def update_remap_capslock_to_backspace(self):
+        self.remap_capslock_to_backspace = self.remap_capslock_to_backspace.get()
+
+    def manual(self):
+        messagebox.showinfo("Manual", """Type ":", "-", "--" or "—" (em dash) after a word to get its definition. If it suits you, press Tab. If not, press Down arrow for the next one. Nothing good? Continue typing.""")
+
+    def about(self):
+        messagebox.showinfo("About", f"Version {program_version}\n\nFor any questions and suggestions contact: Telegram: @carbon_starlight")
+
+    def undo(self):
+        self.text_area.event_generate("<<Undo>>")
+
+    def redo(self):
+        self.text_area.event_generate("<<Redo>>")
+
+    def switch_layout(self, layout):
+        # global keyboard_layout
+        print(layout)
+        if layout == "system":
+            self.keyboard_layout = None
+        elif layout == "colemak":
+            self.keyboard_layout = "`1234567890-=qwfpgjluy;[]\\arstdhneio'zxcvbkm,./~!@#$%^&*()_+QWFPGJLUY:{}|ARSTDHNEIO\"ZXCVBKM<>?"
+            # self.remap_capslock_to_backspace = tk.BooleanVar(value=True)
+        elif layout == "colemak-dh":
+            self.keyboard_layout = "`1234567890-=qwfpbjluy;[]\\arstgmneio'zxcdvkh,./~!@#$%^&*()_+QWFPBJLUY:{}|ARSTGMNEIO\"ZXCDVKH<>?"
+            # self.remap_capslock_to_backspace = tk.BooleanVar(value=True)
+        elif layout == "dvorak":
+            self.keyboard_layout = "`1234567890[]',.pyfgcrl/=\\aoeuidhtns-;qjkxbmwvz~!@#$%^&*(){}\"<>PYFGCRL?+|AOEUIDHTNS_:QJKXBMWVZ"
+            # self.remap_capslock_to_backspace = tk.BooleanVar(value=True)
+        elif layout == "qwerty":
+            self.keyboard_layout = "`1234567890-=qwertyuiop[]\\asdfghjkl;'zxcvbnm,./~!@#$%^&*()_+QWERTYUIOP{}|ASDFGHJKL:\"ZXCVBNM<>?"
+            # self.remap_capslock_to_backspace = tk.BooleanVar(value=False)
+        elif layout == "workman":
+            self.keyboard_layout = "`1234567890-=qdrwbjfup;[]\\ashtgyneoi'zxmcvkl,./~!@#$%^&*()_+QDRWBJFUP:{}|ASHTGYNEOI\"ZXMCVKL<>?"
+            # self.remap_capslock_to_backspace = tk.BooleanVar(value=True)
+        elif layout == "rulemak":
+            self.keyboard_layout = "ё1234567890-ъяжфпгйлуыюшщэарстдчнеиоьзхцвбкм,./Ё!\"№;%:?*()_ЪЯЖФПГЙЛУЫЮШЩЭАРСТДЧНЕИОЬЗХЦВБКМ;:?"
+            # self.remap_capslock_to_backspace = tk.BooleanVar(value=True)
+        print('layout set to ' + layout, self.keyboard_layout)
+        # qwerty     = "`1234567890-=qwertyuiop[]\\asdfghjkl;'zxcvbnm,./~!@#$%^&*()_+QWERTYUIOP{}|ASDFGHJKL:\"ZXCVBNM<>?"
+        # colemak    = "`1234567890-=qwfpgjluy;[]\\arstdhneio'zxcvbkm,./~!@#$%^&*()_+QWFPGJLUY:{}|ARSTDHNEIO\"ZXCVBKM<>?"
+        # rulemak    = "ё1234567890-ъяжфпгйлуыюшщэарстдчнеиоьзхцвбкм,./Ё!\"№;%:?*()_ЪЯЖФПГЙЛУЫЮШЩЭАРСТДЧНЕИОЬЗХЦВБКМ;:?"
+        # colemak_dh = "`1234567890-=qwfpbjluy;[]\\arstgmneio'zxcdvkh,./~!@#$%^&*()_+QWFPBJLUY:{}|ARSTGMNEIO\"ZXCDVKH<>?"
+        # workman    = "`1234567890-=qdrwbjfup;[]\\ashtgyneoi'zxmcvkl,./~!@#$%^&*()_+QDRWBJFUP:{}|ASHTGYNEOI\"ZXMCVKL<>?"
+        # dvorak     = "`1234567890[]',.pyfgcrl/=\\aoeuidhtns-;qjkxbmwvz~!@#$%^&*(){}\"<>PYFGCRL?+|AOEUIDHTNS_:QJKXBMWVZ"
+
+    def on_tab_press(self, event):
+        print("⌨️  Tab pressed!")
+
+        if hasattr(self, 'suggestion_window') and self.suggestion_window.winfo_exists():
+
+            # print (dictionary.meaning("indentation"))
+
+            print(self.suggestion_label['text'].replace(" (suggestion)", ""), "qplwfuyq")
+
+            print('ywywyw ', (self.suggestion_label['text'].replace(" (suggestion)", "")))
+            
+            suggestion = str((self.suggestion_label['text'].replace(" (suggestion)", "")))
+            print("sss: ", suggestion)
+
+
+            # Get the suggestion text (without the "(suggestion)" part)
+            #- suggestion = self.suggestion_label['text'].replace(" (suggestion)", "")
+            
+            # Calculate where the real word ends and the suggestion begins
+            # print('oott', word)
+            word_end_pos = self.text_area.search(str(orig_term), self.text_area.index("insert linestart"), backwards=True, exact=True)
+            print('word_end_pos: ', word_end_pos)
+
+            if word_end_pos:
+                word_end_pos = f"{word_end_pos} + {len(suggestion)}c"
+                self.text_area.delete(word_end_pos, tk.INSERT)
+                self.text_area.insert(tk.INSERT, str(" " + suggestion))
+
+            self.remove_suggestion()
+
+            self.part_of_speech = 'noun'
+            
+            return 'break'  # Prevents the default tab action
+
+    def on_focus_out(self, event):
+        self.remove_suggestion()
+
+    def on_key_press(self, event):
+        global definition_selected
+        global definition_is_being_selected
+        # global keyboard_layout
+        # print('⌨️ on_key_press() execution')
+        print('⌨️ ', event)
+
+        # sleep(5)
+
+        # IF SYSTEM LAYOUT NOT USED
+
+        if self.keyboard_layout != "system":
+            print("system layout not used")
+            target_layout = list(self.keyboard_layout)
+            # try:
+            print("179 target_layout: ", target_layout)
+            source_layout = list("`1234567890-=qwertyuiop[]\\asdfghjkl;'zxcvbnm,./~!@#$%^&*()_+QWERTYUIOP{}|ASDFGHJKL:\"ZXCVBNM<>?")
+            print("source event.char: ", event.char)
+            source_event_char = event.char
+            if event.char in target_layout:
+                character_index = source_layout.index(event.char)
+                event.char = target_layout[character_index]
+            else:
+                pass
+            try:
+                print(f"182 new event.char: {event.char}, index: {character_index}, target_layout: {target_layout}")
+            except:
+                print(f"182 new event.char: {event.char}, no index assigned, target_layout: {target_layout}")
+
+            # self.text_area.insert(tk.INSERT, event.char)
+            if event.keysym == 'Return':  # Use `event.keysym` to check for non-character keys
+                # Insert a newline at the cursor position
+                # self.text_area.insert(tk.INSERT, '\n')
+                pass
+            elif event.keysym == 'BackSpace':
+                self.text_area.delete("insert - 1 chars", "insert")
+            elif event.keysym == 'Delete':
+                self.text_area.delete("insert", "insert + 1 char")
+            elif self.remap_capslock_to_backspace.get() and event.keysym == 'Caps_Lock':
+                self.text_area.delete("insert - 1 char", "insert")
+            elif self.remap_backspace_to_capslock.get() and event.keysym == 'BackSpace':
+                # Toggle CapsLock
+                # keyboard_controller.press(Key.caps_lock)
+                # keyboard_controller.release(Key.caps_lock)
+                # keyboard.press_and_release('caps lock')
+                self.toggle_caps_lock()
+            elif event.char in target_layout and event.char != '':
+                self.text_area.insert(tk.INSERT, event.char)
+
+        # IF SYSTEM LAYOUT IS USED
+
+        # print(258)
+        if self.keyboard_layout == "system" and self.remap_capslock_to_backspace.get() and event.keysym == 'Caps_Lock' and self.this_interaction_shall_not_be_modified == False and self.make_normal_cl_press == False:  # So this command is for BS
+            # erase the last character
+            self.this_interaction_shall_not_be_modified = True
+            # self.make_normal_cl_press = True
+            print(260)
+            self.text_area.delete("insert - 1 char", "insert")
+            print(262)
+            keyboard.press_and_release('backspace')
+            print(266)
+            self.last_special_action == 'bs_via_cl_key'
+
+
+            random_int = random.randint(1, 2)
+            if random_int == 1:
+                keyboard_controller.press(Key.backspace)
+                keyboard_controller.release(Key.backspace)
+                print(11111)
+            else:
+                print(99990)
+
+
+            return "break"
+        if self.keyboard_layout == "system" and self.remap_backspace_to_capslock.get() and event.keysym == 'BackSpace' and self.this_interaction_shall_not_be_modified == False and self.make_normal_cl_press == False:
+            if self.last_special_action != 'bs_via_cl_key':
+                # Toggle CapsLock
+                print(271)
+                self.this_interaction_shall_not_be_modified = True
+                # self.make_normal_cl_press = False
+                # self.text_area.insert(tk.INSERT, ' ')
+                keyboard_controller.press(Key.caps_lock)
+                keyboard_controller.release(Key.caps_lock)
+                # self.toggle_caps_lock()
+                return "break"
+            else:
+                self.last_special_action = ''
+                # self.toggle_caps_lock()
+                return
+
+        # if self.make_normal_cl_press == True:
+        #     self.stage_of_cl_press += 1
+        #     print("self.stage_of_cl_press += 1", self.stage_of_cl_press)
+        #     if self.stage_of_cl_press == 2:
+        #         self.make_normal_cl_press == False
+        #         self.stage_of_cl_press = 0
+        #         print("self.stage_of_cl_press = 0")
+
+        # print(279)
+        if self.this_interaction_shall_not_be_modified == True and self.keyboard_layout == "system":
+            self.this_interaction_shall_not_be_modified = False
+            print(282)
+            print(self.last_special_action)
+            if self.last_special_action == 'bs_via_cl_key':
+                keyboard_controller.press(Key.backspace)
+                keyboard_controller.release(Key.backspace)
+                print(288, last_special_action)
+                self.last_special_action = ''
+            return "break"
+            
+        # Check for a combination of keys like Ctrl+S or Ctrl+N
+        ctrl_held = event.state & 0x0004 != 0  # Check for control key state
+        # If the event is a character input and the control key is not held or it's not a save or new file operation
+        if event.char and not (ctrl_held and event.keysym.lower() in ('s', 'n')):
+            self.changes_saved = False
+            # print("177")
+
+        if event.char in [':', '-', '—', '--']:
+            print('Triggered: if event.char in [\'\':, \'-\', \'—\', \'--\'], event.char: ', event.char)
+            self.loading_emoji("insert")
+
+            # Force the Tkinter text widget to update and display the emoji
+            self.text_area.update_idletasks()
+
+            # Call the new method to handle the definition lookup
+            definition_selected = 0
+            definition_is_being_selected = True
+            self.lookup_definition()
+                # Here, we remove the suggestion if key other than Tab is pressed
+        elif event.keysym == 'Down' and definition_is_being_selected:
+        # elif event.keysym in ('Down', 'Right'):
+            print('Triggered: if event.keysym in [\'Down\'], event.keysym: ', event.keysym)
+            definition_selected += 1
+            self.lookup_definition()
+            return 'break'
+        elif event.keysym == 'Up' and definition_is_being_selected:
+        # elif event.keysym in ('Up', 'Left'):
+            print('Triggered: if event.keysym in [\'Up\'], event.keysym: ', event.keysym)
+            definition_selected -= 1
+            self.lookup_definition()
+            return 'break'
+        elif event.keysym == 'Right' and definition_is_being_selected:
+            print('Triggered: if event.keysym in [\'Right\'], event.keysym: ', event.keysym)
+            print("Old POS: ", self.part_of_speech)
+            self.part_of_speech = self.part_of_speech_list[(self.part_of_speech_list.index(self.part_of_speech) + 1) % len(self.part_of_speech_list)]
+            print("New POS: ", self.part_of_speech)
+            self.lookup_definition()
+            return 'break'
+        elif event.keysym not in ("Tab", "ISO_Left_Tab"):
+            # print('Triggered: if event.keysym not in [\'Tab\', \'ISO_Left_Tab\'], event.keysym: ', event.keysym)
+            self.remove_suggestion()
+            definition_is_being_selected = False
+            self.part_of_speech = 'noun'
+
+        # print('Check 271:', self.remap_capslock_to_backspace.get())
+            
+        if self.keyboard_layout != "system" and event.char in source_layout:
+            return "break"
+
+    def toggle_caps_lock(self):
+        system_name = platform.system()
+        if system_name == 'Windows':
+            # PowerShell script to toggle Caps Lock state
+            cmd = ['powershell', '-command', "$wsh = New-Object -ComObject WScript.Shell; $wsh.SendKeys('{CAPSLOCK}')"]
+        elif system_name == 'Linux':
+            # Use xdotool to toggle Caps Lock state
+            cmd = ['xdotool', 'key', 'Caps_Lock']
+        elif system_name == 'Darwin':  # macOS system name is 'Darwin'
+            # AppleScript to toggle Caps Lock state
+            cmd = ['osascript', '-e', 'tell application "System Events" to key code 57']  # 57 is the key code for Caps Lock
+        else:
+            raise Exception("Unsupported operating system.")
+
+        subprocess.run(cmd)
+
+
+    def loading_emoji(self, command):
+        emoji_to_insert = " ⏳"
+        if command == 'insert':
+            current_position = self.text_area.index(tk.INSERT)
+            print('cur_pos ', current_position)
+            self.text_area.insert(current_position, emoji_to_insert)
+
+        elif command == 'remove':
+            content = self.text_area.get("1.0", tk.END)  # Retrieves all content from the text area
+            emoji_index = content.find(emoji_to_insert)  # Finds the first occurrence of the emoji
+
+            # If the emoji is found in the text, remove it
+            if emoji_index != -1:
+                pos = self.text_area.search(emoji_to_insert, "1.0", tk.END)
+                if pos:
+                    # Calculate position of the character following the emoji
+                    length = tk.StringVar()
+                    end_pos = self.text_area.index(f"{pos}+{len(emoji_to_insert)}c")
+
+                    # Remove the emoji
+                    self.text_area.delete(pos, end_pos)
+
+    def lookup_definition(self):
+        print("lookup_definition()")
+        print('received part of speech: ', self.part_of_speech)
+        global definition_selected
+        global orig_term
+        # Get the current cursor position
+        cursor_pos = self.text_area.index(tk.INSERT)
+        
+        # Extract the word before the cursor
+        line_start = cursor_pos.split('.')[0] + '.0'
+        line_text = self.text_area.get(line_start, cursor_pos)
+        
+        # Find the last word before the punctuation using regex
+        match = re.search(r'\b\w+\b(?=\W*$)', line_text)
+        
+        word = str(match.group())
+
+        print('!!!word: ', word)
+        print('!!!match: ', match)
+        print(self.dictionary_selected)
+        print(self.dictionary_language_selected)
+
+        if self.dictionary_selected == "PyDictionary":
+
+            if match:
+                orig_term = word
+                print("plpl: ", dictionary.meaning(word))
+                # definition_selected = 0
+                try:
+                    word_definition = str(dictionary.meaning(word)["Noun"][definition_selected])
+                except:
+                    try:
+                        word_definition = str(dictionary.meaning(word)["Adjective"][definition_selected])
+                    except:
+                        try:
+                            word_definition = str(dictionary.meaning(word)["Adverb"][definition_selected])
+                        except:
+                            try:
+                                word_definition = str(dictionary.meaning(word)["Verb"][definition_selected])
+                            except:
+                                try:
+                                    word_definition = str(dictionary.meaning(word)["Pronoun"][definition_selected])
+                                except:
+                                    word_definition = "No definition found"
+                
+                
+                # suggestion = str(dictionary.meaning(suggestion_label['text'])["Noun"][0])
+                self.show_suggestion(word_definition)
+
+        elif self.dictionary_selected == "WiktionaryParser":
+            print('!!')
+            if match:
+                orig_term = word
+                # time0 = time.time()
+                # print("plpl: ", parser.fetch(orig_term))
+                # print(f"fetching I was too lazy to remove took {time.time()-time0}")
+                # definition_selected = 0
+
+
+                # for word_data in word_info:
+                #     if 'definitions' in word_data:
+                #         for definition in word_data['definitions']:
+                #             # Check if 'text' field exists in the definitions
+                #             if 'text' in definition:
+                #                 # Print the text of each definition
+                #                 for text_item in definition['text']:
+                #                     print(text_item)
+
+                # word_definition = word_info[0]['definitions'][0]['text'][definition_selected]
+
+
+
+                # definition_index = definition_selected
+
+                # # Assuming there is only one etymology per JSON entry.
+                # entry = word_info[0]
+                
+                # # Check if 'definition_index' is within range of the 'definitions' list.
+                # if definition_index < 0 or definition_index >= len(entry['definitions']):
+                #     raise IndexError("Definition index out of range.")
+                
+                # # Get the specific definition.
+                # definition = entry['definitions'][definition_index]
+                
+                # # Return the text from the definition.
+                # word_definition = definition['text']
+
+                # Variables provided
+                # word_info = [...]  # The JSON data you've provided
+                # definition_selected = 2  # for example, if you want the second definition
+                # Initialize word_definition with None or a default string
+                time1 = time.time()
+                word_info = parser.fetch(word, self.dictionary_language_selected)
+                time2 = time.time()
+                print('parser.fetch took ' + str(time2 - time1) + ' seconds')
+                print('w_i', word_info)
+                # self.part_of_speech = "noun"  # the part of speech you're looking for, "noun" in this case
+                word_definition = None
+
+                # The function to extract the definition (written here as a loop)
+                for definition in word_info[0]['definitions']:
+                    if definition['partOfSpeech'] == self.part_of_speech:
+                        try:
+                            # Subtract 1 for zero-based indexing
+                            word_definition = definition['text'][definition_selected + 1]
+                            break  # Break the loop once we found the correct definition
+                        except IndexError:
+                            word_definition = "Definition number exceeds available definitions for the given part of speech."
+                            break
+
+                if word_definition is None:
+                    word_definition = "Part of speech not found."
+
+                print("wd", word_definition)
+                self.show_suggestion(f"({self.part_of_speech}) " + word_definition)
+
+        elif self.dictionary_selected == "WiktionaryAPI":
+            pass
+        elif self.dictionary_selected == "WiktionaryParserRu":
+            from wiktionaryparserru.parser import WiktionaryParser as WiktionaryParserRu
+
+            # word = input()
+            parserRu = WiktionaryParserRu()
+            parsed_response = parserRu.make_request(word)
+            print(parsed_response)
+            orig_term = word
+
+            word_definition = parsed_response['definitions'][definition_selected]['value']
+            
+            self.show_suggestion(f"({self.part_of_speech}) " + word_definition)
+
+        elif self.dictionary_selected == "auto":
+            # Replace with universal library
+            if self.dictionary_language_selected == "english":
+                print("!!!!")
+                if '\u0400' <= word[0] <= '\u04FF':
+                    self.show_suggestion("The language of the dictionary is set to English. This word is written with Cyrillic letters. You may consider switching the dictionary language.\n\nТекущий язык словаря — английский, а слово начинается с кириллической буквы. Возможно, язык словаря следует сменить.")
+                if match:  # IDK what it does
+                    orig_term = word
+                    time1 = time.time()
+                    print(word, "^&*")
+                    word_info = parser.fetch(word, self.dictionary_language_selected)
+                    time2 = time.time()
+                    print('parser.fetch took ' + str(time2 - time1) + ' seconds')
+                    print('w_i', word_info)
+                    # self.part_of_speech = "noun"  # the part of speech you're looking for, "noun" in this case
+                    word_definition = None
+
+                    console.log(word_info)
+
+                    # The function to extract the definition (written here as a loop)
+                    for definition in word_info[0]['definitions']:
+                        if definition['partOfSpeech'] == self.part_of_speech:
+                            try:
+                                # Subtract 1 for zero-based indexing
+                                word_definition = definition['text'][definition_selected + 1]
+                                break  # Break the loop once we found the correct definition
+                            except IndexError:
+                                word_definition = "Definition number exceeds available definitions for the given part of speech."
+                                break
+
+                    console.log(word_definition)
+
+                    if word_definition is None:
+                        word_definition = "Part of speech not found."
+
+                    print("wd", word_definition)
+                    self.show_suggestion(f"({self.part_of_speech}) " + word_definition)
+
+
+            elif self.dictionary_language_selected == "russian":
+                from wiktionaryparserru.parser import WiktionaryParser as WiktionaryParserRu
+
+                # word = input()
+                parserRu = WiktionaryParserRu()
+                parsed_response = parserRu.make_request(word)
+                console.log(parsed_response)
+                orig_term = word
+
+                if parsed_response == {'status': 'failure', 'reason': 'Not Found', 'code': 404}:
+                    if word[0].islower():
+                        word = word[0].upper() + word[1:]
+                    else:
+                        word = word[0].lower() + word[1:]
+                    parsed_response = parserRu.make_request(word)
+                    console.log(parsed_response)
+                    orig_term = word
+                    # TODO: the same for other languages
+
+
+                word_definition = parsed_response['definitions'][definition_selected]['value']
+                
+                self.show_suggestion(f"({self.part_of_speech}) " + word_definition)
+            elif self.dictionary_language_selected == "italian":
+                parser_factory = WiktionaryParserFactory(default_language='it')
+                pizza_parser = parser_factory.get_page(word)
+                fetched_data = pizza_parser.parse()
+                pprint.pprint(fetched_data)
+                with open("Untitled-1#.json", "w") as outfile:
+                    json.dump(fetched_data, outfile)
+                d = {
+                    "noun": "sostantivo",
+                    "syllabification": "sillabazione",
+                    "pronunciation": "pronuncia",
+                    "etymology/_derivation": "etimologia / derivazione",
+                    "synonyms": "sinonimi",
+                    "derived_words": "parole derivate",
+                    "diminutives_and_augmentatives": "alterati",
+                    "sayings_and_phrases": "proverbi e modi di dire",
+                    "translation": "traduzione" 
+                }
+                part_of_speech = d[self.part_of_speech]
+                word_definition = fetched_data['meanings'][part_of_speech]['meanings'][definition_selected]['meaning']
+                print(word_definition, '---000---')
+                self.show_suggestion(f"({self.part_of_speech}) " + word_definition)
+
+            
+
+    
+    def show_suggestion(self, word):
+
+        self.loading_emoji("remove")
+
+        # print(word, "suggestion 1290")
+        # prints word with line number of this print statement in code
+        console.log("Showing suggestion for: ", word)
+        # rich.print(word)
+        self.remove_suggestion()
+        console.log("test")
+        console.log(self.dictionary_selected)
+        console.log(self.dictionary_language_selected)
+
+        if displayWordSuggestion:
+            suggestion = word + " (suggestion)"
+        else:
+            suggestion = word
+        cursor_pos = self.text_area.index(tk.INSERT)
+        cursor_x, cursor_y, cursor_width, cursor_height = self.text_area.bbox(cursor_pos)
+        x = self.text_area.winfo_rootx() + cursor_x
+        y = self.text_area.winfo_rooty() + cursor_y + cursor_height
+        
+        self.suggestion_window = tk.Toplevel(self.window)
+        self.suggestion_window.wm_overrideredirect(True)
+        self.suggestion_window.wm_geometry("+%d+%d" % (x, y))
+        label = tk.Label(self.suggestion_window, text=suggestion, fg="grey", bg="white")
+        # label.pack()  # either this or `self.suggestion_label.pack()` that was suggested by GPT-4 later——both seem to work
+
+        # Retain a reference to the label to access it later
+        self.suggestion_label = tk.Label(self.suggestion_window, text=suggestion, fg="grey", bg="white")
+        self.suggestion_label.pack()  # leave only one 𝔬𝔫𝔦𝔦-𝔠𝔥𝔞𝔫
+        
+        # self.suggestion_window.focus_force()
+        # self.suggestion_window.grab_set()  # ?
+        self.text_area.focus()
+    
+    def remove_suggestion(self):
+        if hasattr(self, 'suggestion_window'):
+            self.suggestion_window.grab_release()
+            self.suggestion_window.destroy()
+            del self.suggestion_window
+
+    def new_file(self, event=None):
+        print(self.changes_saved)
+        # Clears the current text area for a new file
+        if messagebox.askokcancel("New File", """This will delete all unsaved changes to the current file.
+
+Are you sure you want to create a new file?""", default = 'ok' if self.changes_saved else 'cancel'):
+            self.text_area.delete(1.0, tk.END)
+
+    def open_file(self, event=None):
+        # Open a file dialog to select a file to open
+        file = filedialog.askopenfilename(defaultextension=".txt", filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
+        if file:
+            try:
+                with open(file, 'r') as f:
+                    self.text_area.delete(1.0, tk.END)
+                    self.text_area.insert(1.0, f.read())
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not open file: {e}")
+
+    def save_file(self, event=None):
+        # Open a file dialog to save the file
+        file = filedialog.asksaveasfilename(defaultextension=".txt", filetypes=[("Text Files", "*.txt"), ("All Files", "*.*")])
+        if file:
+            try:
+                with open(file, 'w') as f:
+                    f.write(self.text_area.get(1.0, tk.END))
+                self.changes_saved = True
+            except Exception as e:
+                messagebox.showerror("Error", f"Could not save file: {e}")
+
+if __name__ == "__main__":
+    text_editor = TextEditor()
